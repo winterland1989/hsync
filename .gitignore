@@ -1,0 +1,13 @@
+# trivial gitignore file
+.cabal-sandbox/
+cabal.sandbox.config
+cabal-dev/
+.hpc/
+*.hi
+*.o
+*.p_hi
+*.prof
+*.tix
+cabal.config
+dist-sandbox
+dist
