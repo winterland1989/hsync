@@ -1,6 +1,7 @@
 import System.Environment
 import System.Exit
 import System.IO.Error (catchIOError)
+import Control.Monad
 import Data.Conduit.Binary (sinkFile)
 import Network.HTTP.Conduit
 import qualified Data.Conduit as C

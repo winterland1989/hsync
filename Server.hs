@@ -69,7 +69,5 @@ main = runApiary (run 3000) def $ do
                     logFileOperation "Write" p
                     performFileOperation $ B.writeFile p (fileContent $ head f)
                     nf <- liftIO $ B.readFile p 
-                    contentType "text/html"
+                    contentType "text/plain"
                     string $ showBSasHex $ hash SHA512 nf
-
-
