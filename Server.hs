@@ -12,10 +12,12 @@ import System.IO.Error (catchIOError)
 import Data.Monoid
 import qualified Data.Text as T
 import qualified Data.ByteString.Lazy as B (writeFile, readFile)
+import qualified Data.ByteString as BS (writeFile)
+import qualified Data.ByteString.Char8 as B (unpack)
 import qualified Text.Blaze.Html5 as H
 import qualified Text.Blaze.Html5.Attributes as A
-import System.FilePath (combine, joinPath)
-import System.Directory (removeFile)
+import System.FilePath
+import System.Directory
 import Rainbow
 import Data.Time.Clock
 import Codec.Digest.SHA
@@ -32,6 +34,23 @@ logFileOperation op file = liftIO $ do
 
 performFileOperation io = liftIO $ catchIOError io $ putStrLn . show
 
+writePostFile dir f = do
+    performFileOperation $ createDirectoryIfMissing True dir
+    let fp = combine dir $ B.unpack $ fileName f
+    logFileOperation "Write" fp
+    performFileOperation $ B.writeFile fp $ fileContent f
+    verifyfileSHA fp
+
+writePutFile p bs = do
+    performFileOperation $ createDirectoryIfMissing True $ takeDirectory p
+    logFileOperation "Write" p
+    performFileOperation $ BS.writeFile p $ bs
+    verifyfileSHA p
+
+verifyfileSHA f = do
+    nf <- liftIO $ B.readFile f
+    appendString $ (showBSasHex $ hash SHA512 nf) ++ "\n"
+
 main :: IO ()
 main = runApiary (run 3000) def $ do
 
@@ -42,10 +61,10 @@ main = runApiary (run 3000) def $ do
                 ,   documentUseCDN      = False
                 ,   documentDescription = Just $
                         H.form H.! A.method "POST" H.! A.target "_blank" H.! A.enctype "multipart/form-data"
-                            H.! A.onsubmit "this.action=this.childNodes[1].value;" $ mconcat
+                            H.! A.onsubmit "this.action=this.lastChild.value;" $ mconcat
                         [   "Upload/update file to path below:"
-                        ,   H.input H.! A.name "file to upload" H.! A.type_ "file"
-                        ,   H.input H.! A.style "width:100%" H.! A.value "home/bae/..."
+                        ,   H.input H.! A.name "files[]" H.! A.multiple "" H.! A.type_ "file"
+                        ,   H.input H.! A.style "width:100%" H.! A.value "home/..."
                         ]
                 }
         [capture|/static/api-documentation.js|] . action $ file "static/api-documentation.js" Nothing
@@ -63,11 +82,14 @@ main = runApiary (run 3000) def $ do
                 performFileOperation $ removeFile p
 
             method POST . document "Write/Create file api" . action $ do
+                dir <- getFilePath
+                contentType "text/plain"
+                mapM_ (writePostFile dir) =<< getReqBodyFiles
+
+            method PUT . document "Write/Create file api" . action $ do
                 p <- getFilePath
-                f <- getReqBodyFiles
-                unless (null f) $ do
-                    logFileOperation "Write" p
-                    performFileOperation $ B.writeFile p (fileContent $ head f)
-                    nf <- liftIO $ B.readFile p 
-                    contentType "text/plain"
-                    string $ showBSasHex $ hash SHA512 nf
+                contentType "text/plain"
+                b <- getReqBody
+                case b of
+                    Unknown bs -> writePutFile p bs
+                    _ -> bytes "PUT file in request body..."

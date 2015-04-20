@@ -1,6 +1,10 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 import System.Environment
 import System.Exit
 import System.IO.Error (catchIOError)
+import Control.Monad.Trans.Resource
+import Control.Monad.IO.Class
 import Control.Monad
 import Data.Conduit.Binary (sinkFile)
 import Network.HTTP.Conduit
@@ -18,13 +22,15 @@ usage   = putStrLn "Usage: hsync [-vh] [remote addr]"
 version = putStrLn "hsync 0.1"
 exit    = exitWith ExitSuccess
 
+startMonitor :: String -> IO ()
 startMonitor = \addr -> do
     initReq <- parseUrl addr
     let req = initReq { method = "POST" }
     withManager $ \manager -> do
-        liftIO $ catchIOError $ http req manager $ do
-            putStrLn "Address is down..."
-            exit
+        liftIO $ catchIOError
+            (void $ httpLbs req manager) $ 
+            \e -> putStrLn "Can't reach remote service..." >> exit
+
 
 
 
