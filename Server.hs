@@ -6,16 +6,15 @@
 {-# LANGUAGE TypeOperators #-}
 
 import System.Environment
-import System.Exit
 import Web.Apiary
-import Network.Wai.Handler.Warp
+import Network.Wai (Request, lazyRequestBody)
+import Network.Wai.Handler.Warp (run, Port)
 import Control.Monad.Apiary.Action
 import Control.Monad
 import System.IO.Error (catchIOError)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T (decodeUtf8)
-import qualified Data.ByteString.Lazy as B (writeFile, readFile)
-import qualified Data.ByteString as BS (writeFile)
+import qualified Data.ByteString.Lazy as B (ByteString, writeFile, readFile)
 import qualified Text.Blaze.Html5 as H
 import qualified Text.Blaze.Html5.Attributes as A
 import System.FilePath
@@ -26,14 +25,13 @@ import Codec.Digest.SHA
 import Codec.Digest.SHA.Misc
 
 main = getArgs >>= parse
-parse ["-h"] = usage >> exit
-parse ["-v"] = version >> exit
+parse ["-h"] = usage
+parse ["-v"] = version
 parse (port:[]) = serve $ read port
-parse _ = usage >> exit
+parse _ = usage
 
 usage   = putStrLn "Usage: hsync-server [-vh] [port]"
 version = putStrLn "hsync server 0.1"
-exit    = exitWith ExitSuccess
 
 serve :: Port -> IO ()
 serve p = runApiary (run p) def $ do
@@ -76,8 +74,7 @@ serve p = runApiary (run p) def $ do
         method PUT . document "Write/Create file at given path" . action $ do
             p <- getFilePath
             contentType "text/plain"
-            Unknown bs <- getReqBody
-            writePutFile p bs
+            writePutFile p =<< getRequest
 
         method POST . document "Write/Create file to given folder" . action $ do
             dir <- getFilePath
@@ -106,11 +103,11 @@ writePostFile dir f = do
     performOperation $ B.writeFile fp $ fileContent f
     verifyfileSHA fp
 
-writePutFile :: MonadIO m => FilePath -> ByteString -> ActionT exts prms m ()
-writePutFile p bs = do
+writePutFile :: MonadIO m => FilePath -> Request -> ActionT exts prms m ()
+writePutFile p req = do
     performOperation $ createDirectoryIfMissing True $ takeDirectory p
     logOperation "Write" p
-    performOperation $ BS.writeFile p $ bs
+    performOperation $ B.writeFile p =<< lazyRequestBody req
     verifyfileSHA p
 
 verifyfileSHA :: MonadIO m => FilePath -> ActionT exts prms m ()
