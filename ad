@@ -1,8 +1,0 @@
-"+pa        rpath <- makeRelative cd $ encodeString p
-        case parseRelativeReference rpath of
-            Just u ->
-                        putStr "DELETE " >> printGreen p
-                        req <- buildRequest $ http DELETE $ encodeHttpPath p
-                        sendRequest c req emptyBody 
-            Nothing ->
-

@@ -21,6 +21,8 @@ import qualified Filesystem.Path as P (FilePath)
 import Filesystem.Path.CurrentOS (encodeString)
 import Network.URI
 import Rainbow
+import Codec.Digest.SHA
+import Codec.Digest.SHA.Misc
 
 main :: IO ()
 main = getArgs >>= parse
@@ -42,10 +44,13 @@ parseAddr addr = do
     rUri <- parseRelativeReference $ uriPath u
     let port = case uriPort ua of (':':num) -> read num
                                   _         -> 80
-
     return ( fromString $ uriRegName ua, port, rUri )
 
-printGreen s = putChunkLn $ ( chunkFromText $ T.pack $ show s ) <> fore green
+printColor c s = putChunkLn $ ( chunkFromText $ T.pack $ show s ) <> fore c
+printGreen :: Show s => s -> IO ()
+printGreen     = printColor green
+printRed :: Show s => s -> IO ()
+printRed       = printColor red
 
 testConnection :: Hostname -> Port -> URI -> IO ()
 testConnection host port uri = do
@@ -60,11 +65,8 @@ testConnection host port uri = do
             putStr "Remote HOST: " >> printGreen host
             putStr "Remote PORT: " >> printGreen port
             putStr "Remote PATH: " >> printGreen uri
-
             startMonitor c uri cd
-        else do
-            putStrLn "hsync server not found" >> closeConnection c
-
+        else putStrLn "Can't acess remote path" >> closeConnection c
 
 startMonitor :: Connection -> URI -> FilePath -> IO ()
 startMonitor c uri cd = do 
@@ -80,7 +82,8 @@ sync c uri cd e = case e of
     FN.Modified p t  -> go PUT    uri (relativeFilePath p) t
     where
         relativeFilePath p = makeRelative cd $ encodeString p
-        
+
+        go :: Method -> URI -> FilePath -> UTCTime -> IO ()
         go op uri p t = case parseRelativeReference p of
             Nothing   -> do
                 putStr $ show t ++ " " ++ show op ++ " failed "
@@ -91,11 +94,11 @@ sync c uri cd e = case e of
                 printGreen fUri
                 let body = case op of DELETE -> emptyBody
                                       PUT    -> fileBody p
-
                 req <- buildRequest $ http op $ B.pack $ show fUri
-                sendRequest c req body 
-
-
-
-        encodeFilePath = encodeFilePath
-
+                sendRequest c req body
+                res <- receiveResponse c concatHandler
+                when (op == PUT) $ do
+                    nf <- B.readFile p
+                    if res == (B.pack (showBSasHex $ hash SHA512 nf) <> "\n")
+                        then printGreen "File verified OK!"
+                        else printRed "File verified failed!"

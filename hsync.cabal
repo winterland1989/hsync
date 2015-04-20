@@ -45,3 +45,5 @@ executable hsync
                      , system-filepath    >=0.4 && <0.5
                      , network-uri        >=2.6 && <2.7
                      , directory          >=1.2 && <1.3
+                     , SHA2               >=0.2 && <0.3
+
