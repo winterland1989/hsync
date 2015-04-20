@@ -23,6 +23,7 @@ import Rainbow
 import Data.Time.Clock
 import Codec.Digest.SHA
 import Codec.Digest.SHA.Misc
+import Data.Either
 
 main = getArgs >>= parse
 parse ["-h"] = usage
@@ -50,16 +51,16 @@ serve p = runApiary (run p) def $ do
     [capture|/static/api-documentation.js|] . action $ file "static/api-documentation.js" Nothing
     [capture|/static/api-documentation.css|] . action $ file "static/api-documentation.css" Nothing
 
-
     [capture|/**path[remote path or folder]|] $ do
 
         method OPTIONS . document "API for client detecting hsync service" . action $ do
             dir <- getFilePath
-            succ <- liftIO $
-                catchIOError (createDirectoryIfMissing True dir >> return True) (const $ return False)
-            when succ $ do
-                logOperation "Sync client detected" dir
-                contentType "text/plain" >> bytes "hsync server 0.1"
+            r <- performOperation $ createDirectoryIfMissing True dir
+            when (isRight r) $ do
+                p <- liftIO $ getPermissions dir
+                when (writable p) $ do
+                    logOperation "Sync client detected" dir
+                    contentType "text/plain" >> bytes "hsync server 0.1"
 
         method GET . document "Read file at given path" . action $ do
             p <- getFilePath
@@ -68,8 +69,9 @@ serve p = runApiary (run p) def $ do
 
         method DELETE . document "Remove file at given path" . action $ do
             p <- getFilePath
-            logOperation "Remove" p
-            performOperation $ removeFile p
+            r <- performOperation $ removeFile p
+            case r of Right () -> logOperation "Remove" p
+                      Left e   -> logError "Remove failed" e
 
         method PUT . document "Write/Create file at given path" . action $ do
             p <- getFilePath
@@ -92,23 +94,34 @@ logOperation op file = liftIO $ do
     putStr $ show t ++ " " ++ op ++ " at "
     putChunkLn $ (chunkFromText $ T.pack file ) <> fore green
 
-performOperation :: MonadIO m => IO () -> ActionT exts prms m ()
-performOperation io = liftIO $ catchIOError io $ putStrLn . show
+logError :: MonadIO m => String -> String -> m ()
+logError op e =  liftIO $ do 
+    t <- getCurrentTime
+    putStr $ show t ++ " " ++ op ++ " because "
+    putChunkLn $ (chunkFromText $ T.pack e ) <> fore red
+
+performOperation :: MonadIO m => IO () -> ActionT exts prms m (Either String ())
+performOperation io = liftIO $ catchIOError succ err
+    where succ = io >> (return $ Right ())
+          err  = return . Left . show
+
+writeFileBS :: MonadIO m => FilePath -> FilePath -> B.ByteString -> ActionT exts prms m ()
+writeFileBS dir p bs = do
+    r <- performOperation $ do 
+        createDirectoryIfMissing True dir
+        B.writeFile p bs
+    case r of
+        Left e  -> logError "Write failed" e
+        Right _ -> logOperation "Write" p >> verifyfileSHA p
 
 writePostFile :: MonadIO m => FilePath -> File -> ActionT exts prms m ()
-writePostFile dir f = do
-    performOperation $ createDirectoryIfMissing True dir
-    let fp = combine dir $ T.unpack $ T.decodeUtf8 $ fileName f
-    logOperation "Write" fp
-    performOperation $ B.writeFile fp $ fileContent f
-    verifyfileSHA fp
+writePostFile dir f = writeFileBS dir p bs
+    where p = combine dir $ T.unpack $ T.decodeUtf8 $ fileName f
+          bs = fileContent f
 
 writePutFile :: MonadIO m => FilePath -> Request -> ActionT exts prms m ()
-writePutFile p req = do
-    performOperation $ createDirectoryIfMissing True $ takeDirectory p
-    logOperation "Write" p
-    performOperation $ B.writeFile p =<< lazyRequestBody req
-    verifyfileSHA p
+writePutFile p req = writeFileBS dir p =<< liftIO (lazyRequestBody req)
+    where dir = takeDirectory p
 
 verifyfileSHA :: MonadIO m => FilePath -> ActionT exts prms m ()
 verifyfileSHA f = do
