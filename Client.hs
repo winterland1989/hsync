@@ -1,7 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 import System.Environment
-import System.Exit
 import System.Directory
 import System.IO.Error (catchIOError)
 import System.FilePath
@@ -9,7 +8,7 @@ import Control.Monad.IO.Class
 import Control.Monad
 import Control.Concurrent (threadDelay)
 import Network.Http.Client
-import qualified System.FSNotify as FN
+import System.FSNotify
 import qualified Data.ByteString as B hiding (pack)
 import qualified Data.ByteString.Char8 as B (pack)
 import qualified Data.Text as T
@@ -68,18 +67,24 @@ testConnection host port uri = do
             startMonitor c uri cd
         else putStrLn "Can't acess remote path" >> closeConnection c
 
+fNConfig :: WatchConfig
+fNConfig = WatchConfig { confDebounce     = Debounce 0.5
+                       , confPollInterval = 500
+                       , confUsePolling   = False
+                       }
+
 startMonitor :: Connection -> URI -> FilePath -> IO ()
 startMonitor c uri cd = do 
-    FN.withManager $ \mgr -> do
-        FN.watchTree mgr "." (const True) (sync c uri cd)
+    withManagerConf fNConfig $ \mgr -> do
+        watchTree mgr "." (const True) (sync c uri cd)
         -- sleep forever (until interrupted)
         forever $ threadDelay maxBound
 
-sync :: Connection -> URI -> FilePath -> FN.Event -> IO ()
+sync :: Connection -> URI -> FilePath -> Event -> IO ()
 sync c uri cd e = case e of
-    FN.Removed  p t  -> go DELETE uri (relativeFilePath p) t
-    FN.Added    p t  -> go PUT    uri (relativeFilePath p) t
-    FN.Modified p t  -> go PUT    uri (relativeFilePath p) t
+    Removed  p t  -> go' DELETE uri (relativeFilePath p) t
+    Added    p t  -> go' PUT    uri (relativeFilePath p) t
+    Modified p t  -> go' PUT    uri (relativeFilePath p) t
     where
         relativeFilePath p = makeRelative cd $ encodeString p
 
@@ -98,7 +103,16 @@ sync c uri cd e = case e of
                 sendRequest c req body
                 res <- receiveResponse c concatHandler
                 when (op == PUT) $ do
+                    putStr "Remote File SHA512: " >> printGreen res
                     nf <- B.readFile p
-                    if res == (B.pack (showBSasHex $ hash SHA512 nf) <> "\n")
+                    let localHash = B.pack $ (showBSasHex $ hash SHA512 nf) ++ "\n"
+                    putStr "Local File SHA512: " >> printGreen localHash
+
+                    if res == localHash
                         then printGreen "File verified OK!"
                         else printRed "File verified failed!"
+
+        go' :: Method -> URI -> FilePath -> UTCTime -> IO ()
+        go' op uri p t = do
+            putStr $ show t ++ " " ++ show op ++ " at "
+            printGreen p
