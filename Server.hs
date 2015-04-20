@@ -57,8 +57,8 @@ serve p = runApiary (run p) def $ do
 
         method OPTIONS . document "API for client detecting hsync service" . action $ do
             dir <- getFilePath
-            succ <- liftIO $ catchIOError
-                (createDirectoryIfMissing True dir >> return True) (const False)
+            succ <- liftIO $
+                catchIOError (createDirectoryIfMissing True dir >> return True) (const $ return False)
             when succ $ do
                 logOperation "Sync client detected" dir
                 contentType "text/plain" >> bytes "hsync server 0.1"
