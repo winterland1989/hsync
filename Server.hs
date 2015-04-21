@@ -4,17 +4,22 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE RecordWildCards #-}
 
 import System.Environment
 import Web.Apiary
 import Network.Wai (Request, lazyRequestBody)
+import Network.Wai.Parse hiding (File, fileContent, fileName)
+import qualified Network.Wai.Parse as P (File, fileContent, fileName)
 import Network.Wai.Handler.Warp (run, Port)
 import Control.Monad.Apiary.Action
 import Control.Monad
 import System.IO.Error (catchIOError)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T (decodeUtf8)
-import qualified Data.ByteString.Lazy as B (ByteString, writeFile, readFile)
+import qualified Data.ByteString.Lazy as B
+import qualified Data.ByteString as BS
 import qualified Text.Blaze.Html5 as H
 import qualified Text.Blaze.Html5.Attributes as A
 import System.FilePath
@@ -22,8 +27,8 @@ import System.Directory
 import Rainbow
 import Data.Time.Clock
 import Codec.Digest.SHA
-import Codec.Digest.SHA.Misc
 import Data.Either
+import System.IO.Unsafe
 
 main = getArgs >>= parse
 parse ["-h"] = usage
@@ -81,7 +86,12 @@ serve p = runApiary (run p) def $ do
         method POST . document "Write/Create file to given folder" . action $ do
             dir <- getFilePath
             contentType "text/plain"
-            mapM_ (writePostFile dir) =<< getReqBodyFiles
+            -- mapM_ (writePostFile dir) =<< getReqBodyFiles
+            req <- getRequest
+            (prms, fs)    <- (liftIO $ parseRequestBody lbsBackEnd req)
+            
+            -- testing wai body paser
+            mapM_ ( \(_, f) -> writeFileBS dir (combine dir $ show $ P.fileName f) (P.fileContent f) ) fs
 
 getFilePath :: ActionT exts '["path" ':= [Text]] IO FilePath
 getFilePath = do
@@ -101,8 +111,8 @@ logError op e =  liftIO $ do
     putChunkLn $ (chunkFromText $ T.pack e ) <> fore red
 
 performOperation :: MonadIO m => IO () -> ActionT exts prms m (Either String ())
-performOperation io = liftIO $ catchIOError succ err
-    where succ = io >> (return $ Right ())
+performOperation io = liftIO $ catchIOError go err
+    where go = io >> (return $ Right ())
           err  = return . Left . show
 
 writeFileBS :: MonadIO m => FilePath -> FilePath -> B.ByteString -> ActionT exts prms m ()
@@ -115,15 +125,14 @@ writeFileBS dir p bs = do
         Right _ -> logOperation "Write" p >> verifyfileSHA p
 
 writePostFile :: MonadIO m => FilePath -> File -> ActionT exts prms m ()
-writePostFile dir f = writeFileBS dir p bs
-    where p = combine dir $ T.unpack $ T.decodeUtf8 $ fileName f
-          bs = fileContent f
+writePostFile dir f = writeFileBS dir p (fileContent f)
+    where p  = combine dir $ T.unpack $ T.decodeUtf8 $ fileName f
 
 writePutFile :: MonadIO m => FilePath -> Request -> ActionT exts prms m ()
 writePutFile p req = writeFileBS dir p =<< liftIO (lazyRequestBody req)
     where dir = takeDirectory p
 
 verifyfileSHA :: MonadIO m => FilePath -> ActionT exts prms m ()
-verifyfileSHA f = do
-    nf <- liftIO $ B.readFile f
+verifyfileSHA p = do
+    nf <- liftIO $ B.readFile p
     appendString $ (showBSasHex $ hash SHA512 nf) ++ "\n"
