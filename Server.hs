@@ -4,10 +4,14 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE RecordWildCards #-}
 
 import System.Environment
 import Web.Apiary
 import Network.Wai (Request, lazyRequestBody)
+import Network.Wai.Parse hiding (File, fileContent, fileName)
+import qualified Network.Wai.Parse as P (File, fileContent, fileName)
 import Network.Wai.Handler.Warp (run, Port)
 import Network.Wai.Parse as P
 import Control.Monad.Apiary.Action
@@ -23,7 +27,6 @@ import System.Directory
 import Rainbow
 import Data.Time.Clock
 import Codec.Digest.SHA
-import Codec.Digest.SHA.Misc
 import Data.Either
 import Control.Exception.Base
 import GHC.IO.Handle
@@ -107,8 +110,8 @@ logError op e =  liftIO $ do
     putChunkLn $ (chunkFromText $ T.pack e ) <> fore red
 
 performOperation :: MonadIO m => IO () -> ActionT exts prms m (Either String ())
-performOperation io = liftIO $ catchIOError succ err
-    where succ = io >> (return $ Right ())
+performOperation io = liftIO $ catchIOError go err
+    where go = io >> (return $ Right ())
           err  = return . Left . show
 
 writeFileBS :: MonadIO m => FilePath -> FilePath -> BL.ByteString -> ActionT exts prms m ()

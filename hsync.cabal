@@ -20,6 +20,7 @@ executable hsync-server
                      , process            >=1.2 && <1.3
                      , apiary             >=1.4 && <1.5
                      , warp               >=3.0 && <3.1
+                     , wai-extra          >=3.0 && <3.1
                      , wai                >=3.0 && <3.1
                      , wai-extra          >=3.0 && <3.1
                      , text               >=1.2 && <1.3
@@ -29,7 +30,9 @@ executable hsync-server
                      , directory          >=1.2 && <1.3
                      , blaze-html         >=0.8 && <0.9
                      , SHA2               >=0.2 && <0.3
- ghc-options:        -O -threaded -with-rtsopts=-N
+    
+  ghc-options:        -O -threaded -with-rtsopts=-N
+
 
 executable hsync
   default-language:    Haskell2010
@@ -50,3 +53,4 @@ executable hsync
                      , directory          >=1.2 && <1.3
                      , SHA2               >=0.2 && <0.3
 
+  ghc-options:        -O -threaded -with-rtsopts=-N
