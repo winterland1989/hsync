@@ -9,12 +9,13 @@ import System.Environment
 import Web.Apiary
 import Network.Wai (Request, lazyRequestBody)
 import Network.Wai.Handler.Warp (run, Port)
+import Network.Wai.Parse as P
 import Control.Monad.Apiary.Action
 import Control.Monad
-import System.IO.Error (catchIOError)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T (decodeUtf8)
-import qualified Data.ByteString.Lazy as B (ByteString, writeFile, readFile)
+import qualified Data.ByteString.Lazy as BL
+import qualified Data.ByteString as BS
 import qualified Text.Blaze.Html5 as H
 import qualified Text.Blaze.Html5.Attributes as A
 import System.FilePath
@@ -24,6 +25,11 @@ import Data.Time.Clock
 import Codec.Digest.SHA
 import Codec.Digest.SHA.Misc
 import Data.Either
+import Control.Exception.Base
+import GHC.IO.Handle
+import GHC.IO.Handle.FD
+import System.IO
+import System.IO.Error (catchIOError)
 
 main = getArgs >>= parse
 parse ["-h"] = usage
@@ -81,15 +87,15 @@ serve p = runApiary (run p) def $ do
         method POST . document "Write/Create file to given folder" . action $ do
             dir <- getFilePath
             contentType "text/plain"
-            mapM_ (writePostFile dir) =<< getReqBodyFiles
+            writePostFile dir =<< getRequest
 
 getFilePath :: ActionT exts '["path" ':= [Text]] IO FilePath
 getFilePath = do
     p <- param [key|path|]
     return $ combine "/" (joinPath $ map T.unpack p)
 
-logOperation :: MonadIO m => String -> FilePath -> m ()
-logOperation op file = liftIO $ do
+logOperation :: String -> FilePath -> IO ()
+logOperation op file = do
     t <- getCurrentTime
     putStr $ show t ++ " " ++ op ++ " at "
     putChunkLn $ (chunkFromText $ T.pack file ) <> fore green
@@ -105,25 +111,34 @@ performOperation io = liftIO $ catchIOError succ err
     where succ = io >> (return $ Right ())
           err  = return . Left . show
 
-writeFileBS :: MonadIO m => FilePath -> FilePath -> B.ByteString -> ActionT exts prms m ()
+writeFileBS :: MonadIO m => FilePath -> FilePath -> BL.ByteString -> ActionT exts prms m ()
 writeFileBS dir p bs = do
     r <- performOperation $ do 
         createDirectoryIfMissing True dir
-        B.writeFile p bs
+        BL.writeFile p bs
     case r of
         Left e  -> logError "Write failed" e
-        Right _ -> logOperation "Write" p >> verifyfileSHA p
+        Right _ -> logOperation "Write" p
 
-writePostFile :: MonadIO m => FilePath -> File -> ActionT exts prms m ()
-writePostFile dir f = writeFileBS dir p bs
-    where p = combine dir $ T.unpack $ T.decodeUtf8 $ fileName f
-          bs = fileContent f
+writePostFile :: MonadIO m => FilePath -> Request -> ActionT exts prms m ()
+writePostFile dir req = do
+        (_, fs) <- liftIO $ P.parseRequestBody backEnd req
+        forM_ fs $ \(_, f) -> appendString $ P.fileContent f
+    where
+        backEnd _ fi io = do
+            let p = combine dir $ T.unpack $ T.decodeUtf8 $ P.fileName fi
+            withFile p WriteMode $ \h -> hSetFileSize h 0 >> loop h io
+            verifyfileSHA p
+        loop h io = do
+            bs <- io
+            if (BS.null bs) then return ()
+                else BS.hPut h bs >> loop h io
 
 writePutFile :: MonadIO m => FilePath -> Request -> ActionT exts prms m ()
 writePutFile p req = writeFileBS dir p =<< liftIO (lazyRequestBody req)
     where dir = takeDirectory p
 
-verifyfileSHA :: MonadIO m => FilePath -> ActionT exts prms m ()
+verifyfileSHA :: FilePath -> IO String
 verifyfileSHA f = do
-    nf <- liftIO $ B.readFile f
-    appendString $ (showBSasHex $ hash SHA512 nf) ++ "\n"
+    nf <- BL.readFile f
+    return $ (showBSasHex $ hash SHA512 nf) ++ "\n"
