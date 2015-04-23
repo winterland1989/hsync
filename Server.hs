@@ -62,15 +62,9 @@ serve p = runApiary (run p) def $ do
 
         method OPTIONS . document "API for client detecting hsync service" . action $ do
             dir <- getFilePath
-            r <- liftIO $ tryIOError $ do 
-                createDirectoryIfMissing True dir
-                getPermissions dir
-            contentType "text/plain" 
-            case r of 
-                Right p -> when (writable p) $ do
-                    liftIO $ logOperation "Sync client detected" dir
-                    bytes "hsync server 0.1"
-                Left e  -> liftIO $ logError "Client refused" e
+            makeSureDirectory dir $ do
+                logOperation "Sync client detected" dir
+                return "hsync server 0.1"
 
         method GET . document "Read file at given path" . action $ do
             p <- getFilePath
@@ -87,12 +81,14 @@ serve p = runApiary (run p) def $ do
         method PUT . document "Write/Create file at given path" . action $ do
             p <- getFilePath
             contentType "text/plain"
-            writePutFile p =<< getRequest
+            req <- getRequest
+            makeSureDirectory (takeDirectory p) $ writePutFile p req
 
         method POST . document "Write/Create file to given folder" . action $ do
             dir <- getFilePath
             contentType "text/plain"
-            writePostFiles dir =<< getRequest
+            req <- getRequest
+            makeSureDirectory dir $ writePostFiles dir req
 
 getFilePath :: ActionT exts '["path" ':= [Text]] IO FilePath
 getFilePath = do
@@ -110,15 +106,25 @@ logError op e = do
     t <- getCurrentTime
     putStr $ show t ++ " " ++ op ++ " because "
     putChunkLn $ (chunkFromText $ T.pack $ show e ) <> fore red
+                        
+makeSureDirectory :: MonadIO m => FilePath -> IO String -> ActionT exts prms m ()
+makeSureDirectory dir io = do
+    r <- liftIO $ tryIOError $ do
+        createDirectoryIfMissing True dir
+        p <- getPermissions dir
+        if (writable p) then return ()
+                        else ioError $
+                            mkIOError permissionErrorType "during test" Nothing $ Just dir
+    case r of
+        Right _ -> appendString =<< liftIO io
+        Left  e -> do
+            liftIO $ logError "Create directory failed" e
+            appendString $ show e
 
-writePostFiles :: MonadIO m => FilePath -> Request -> ActionT exts prms m ()
+writePostFiles :: FilePath -> Request -> IO String
 writePostFiles dir req = do
-        r <- liftIO $ tryIOError $ createDirectoryIfMissing True dir
-        case r of
-            Right _ -> do
-                (_, fs) <- liftIO $ P.parseRequestBody backEnd req
-                forM_ fs $ \(_, f) -> appendString $ P.fileContent f
-            Left  e -> appendString $ show e
+        (_, fs) <- P.parseRequestBody backEnd req
+        return $ concat $ map (\(_, f) -> P.fileContent f) fs 
     where
         backEnd _ fi io = do
             let fn = T.unpack $ T.decodeUtf8 $ P.fileName fi
@@ -146,26 +152,19 @@ writePostFiles dir req = do
             if (BS.null bs) then return ()
                 else BS.hPut h bs >> loop h io
 
-writePutFile :: MonadIO m => FilePath -> Request -> ActionT exts prms m ()
-writePutFile p req =
-    appendString =<< liftIO io
-    where 
-        io = writeFileBS dir p =<< lazyRequestBody req
-        dir = takeDirectory p
-        writeFileBS dir p bs = do
-            r1 <- tryIOError $ do
-                createDirectoryIfMissing True dir
-                BL.writeFile p bs
-            r2 <- tryIOError $ verifyFileSHA p
-            case (r1 >> r2) of 
-                Left  e   -> do
-                    logError "Write failed" e
-                    return $ show e
-                Right sha -> do
-                    logOperation "Write" p
-                    return sha
+writePutFile :: FilePath -> Request -> IO String
+writePutFile p req = do
+    r <- tryIOError $ do
+        BL.writeFile p =<< lazyRequestBody req
+        verifyFileSHA p
+    case r of 
+        Left  e   -> do
+            logError "Write failed" e
+            return $ show e
+        Right sha -> do
+            logOperation "Write" p
+            return sha
                 
-
 verifyFileSHA :: FilePath -> IO String
 verifyFileSHA f = do
     nf <- BL.readFile f
